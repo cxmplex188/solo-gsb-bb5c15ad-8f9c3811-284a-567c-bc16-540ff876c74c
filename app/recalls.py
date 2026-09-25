@@ -46,10 +46,12 @@ def _conflict(
     sample_id: Optional[str] = None,
     recall_nos: Optional[list[str]] = None,
 ) -> s.Conflict:
+    # 召回号写入专属 recall_no 字段,不能借用通用 op_no
+    # (op_no 表示取样/分装/核销等操作号,语义不同,会误导调用方关联)
     return s.Conflict(
         code=code,
         message=message,
-        op_no=recall_no,
+        recall_no=recall_no,
         sample_id=sample_id,
         recall_nos=recall_nos,
     )

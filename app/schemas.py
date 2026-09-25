@@ -135,6 +135,11 @@ class Conflict(BaseModel):
     recall_nos: Optional[list[str]] = Field(
         default=None, description="核销领用冲突:样品当前命中的活跃召回号列表"
     )
+    recall_no: Optional[str] = Field(
+        default=None, description="召回相关冲突:原请求的召回号(recall_not_found/"
+                                  "recall_no_conflict/recall_closed 等);"
+                                  "与 op_no 区分,非召回操作号不写入此字段"
+    )
 
 
 class EdgeOut(BaseModel):

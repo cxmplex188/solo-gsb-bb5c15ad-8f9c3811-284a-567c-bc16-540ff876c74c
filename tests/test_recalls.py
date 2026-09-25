@@ -94,8 +94,15 @@ def _lineage(client):
 def test_open_recall_requires_existing_source(client):
     r = _open_recall(client, "RC-1", "GHOST")
     assert r.status_code == 409
-    assert r.json()["conflicts"][0]["code"] == "sample_not_found"
-    assert client.get("/api/v1/recalls/RC-1").status_code == 404
+    c = r.json()["conflicts"][0]
+    assert c["code"] == "sample_not_found"
+    # 开启冲突也按召回号定位,但不能借用通用 op_no
+    assert c["recall_no"] == "RC-1"
+    assert c["op_no"] is None
+    assert c["sample_id"] == "GHOST"
+    r404 = client.get("/api/v1/recalls/RC-1")
+    assert r404.status_code == 404
+    assert r404.json()["error"] == "recall_not_found"
 
 
 def test_open_recall_tracks_source_and_all_descendants(client):
@@ -226,7 +233,10 @@ def test_recall_idempotent_replay_and_payload_conflict(client):
         "recall_no": "RC-X", "source_sample_id": "S0", "reason": "其他原因",
     })
     assert r3.status_code == 409
-    assert r3.json()["conflicts"][0]["code"] == "recall_no_conflict"
+    c = r3.json()["conflicts"][0]
+    assert c["code"] == "recall_no_conflict"
+    assert c["recall_no"] == "RC-X"
+    assert c["op_no"] is None
 
 
 def test_close_recall_is_idempotent_and_lifts_tracking(client):
@@ -260,13 +270,36 @@ def test_close_recall_is_idempotent_and_lifts_tracking(client):
     # 对已关闭召回号再次开启 -> 409 recall_closed
     r3 = _open_recall(client, "RC-1", "S0")
     assert r3.status_code == 409
-    assert r3.json()["conflicts"][0]["code"] == "recall_closed"
+    c = r3.json()["conflicts"][0]
+    assert c["code"] == "recall_closed"
+    assert c["recall_no"] == "RC-1"
+    assert c["op_no"] is None
+
+
+def test_get_unknown_recall_404_carries_recall_no(client):
+    """按号查询不存在召回单:404 + 原请求召回号在 conflicts[].recall_no,
+    不能写进通用 op_no;error/message 语义保持不变。"""
+    r = client.get("/api/v1/recalls/NO-SUCH")
+    assert r.status_code == 404
+    body = r.json()
+    assert body["error"] == "recall_not_found"
+    c = body["conflicts"][0]
+    assert c["code"] == "recall_not_found"
+    assert c["recall_no"] == "NO-SUCH"
+    assert c["op_no"] is None
+    assert "NO-SUCH" in c["message"]
 
 
 def test_close_unknown_recall_404(client):
     r = client.post("/api/v1/recalls/NOPE/close")
     assert r.status_code == 404
-    assert r.json()["conflicts"][0]["code"] == "recall_not_found"
+    body = r.json()
+    assert body["error"] == "recall_not_found"
+    c = body["conflicts"][0]
+    assert c["code"] == "recall_not_found"
+    assert c["recall_no"] == "NOPE"
+    assert c["op_no"] is None
+    assert "NOPE" in c["message"]
 
 
 def test_list_recalls_filter_by_status(client):
