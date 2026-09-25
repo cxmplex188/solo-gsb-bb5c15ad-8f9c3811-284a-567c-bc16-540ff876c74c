@@ -17,7 +17,10 @@
 ----
 同一召回号 + 同一请求体重放返回首次结果(`replayed: true`),
 不重复开启;同号不同内容返回 `409 recall_no_conflict`;
-对已关闭召回号再次开启返回 `409 recall_closed`。
+对已关闭召回号再次开启返回 `409 recall_closed`;
+召回号不存在时查询/关闭返回 `404 recall_not_found`。
+召回相关冲突的 `conflicts[]` 项携带专用 `recall_no` 字段定位召回号,
+不占用通用 `op_no`(操作号)字段。
 """
 from __future__ import annotations
 
@@ -46,10 +49,12 @@ def _conflict(
     sample_id: Optional[str] = None,
     recall_nos: Optional[list[str]] = None,
 ) -> s.Conflict:
+    # 召回号写入专用 recall_no 字段,不占用通用 op_no(操作号),
+    # 调用方可直接按召回号关联失败;非召回模块的操作号也不会误入此字段
     return s.Conflict(
         code=code,
         message=message,
-        op_no=recall_no,
+        recall_no=recall_no,
         sample_id=sample_id,
         recall_nos=recall_nos,
     )

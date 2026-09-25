@@ -266,7 +266,49 @@ def test_close_recall_is_idempotent_and_lifts_tracking(client):
 def test_close_unknown_recall_404(client):
     r = client.post("/api/v1/recalls/NOPE/close")
     assert r.status_code == 404
-    assert r.json()["conflicts"][0]["code"] == "recall_not_found"
+    assert r.json()["error"] == "recall_not_found"
+    c = r.json()["conflicts"][0]
+    assert c["code"] == "recall_not_found"
+    # 召回号写入专用 recall_no 字段,不占用通用 op_no
+    assert c["recall_no"] == "NOPE"
+    assert c["op_no"] is None
+
+
+def test_recall_conflicts_locate_by_recall_no(client):
+    """召回相关冲突(查询/关闭/开启)的 conflicts 项携带 recall_no 而非 op_no。"""
+    _sampling(client, "OP-1", "S0", 100)
+
+    # 查询不存在的召回单 -> 404,conflicts 项携带原请求的召回号
+    r = client.get("/api/v1/recalls/RC-X")
+    assert r.status_code == 404
+    assert r.json()["error"] == "recall_not_found"
+    c = r.json()["conflicts"][0]
+    assert c["code"] == "recall_not_found"
+    assert c["recall_no"] == "RC-X"
+    assert c["op_no"] is None
+
+    # 查询报错后快照释放:随后创建该召回再查可见新状态
+    assert not client.db.in_transaction
+    assert _open_recall(client, "RC-X", "S0").status_code == 200
+    assert client.get("/api/v1/recalls/RC-X").json()["status"] == "active"
+
+    # 开启同号异内容 -> 409,携带召回号
+    r = _open_recall(client, "RC-X", "S0", reason="其他原因")
+    assert r.status_code == 409
+    assert r.json()["error"] == "conflict"
+    c = r.json()["conflicts"][0]
+    assert c["code"] == "recall_no_conflict"
+    assert c["recall_no"] == "RC-X"
+    assert c["op_no"] is None
+
+    # 已关闭召回再次开启 -> 409,携带召回号
+    assert client.post("/api/v1/recalls/RC-X/close").status_code == 200
+    r = _open_recall(client, "RC-X", "S0")
+    assert r.status_code == 409
+    c = r.json()["conflicts"][0]
+    assert c["code"] == "recall_closed"
+    assert c["recall_no"] == "RC-X"
+    assert c["op_no"] is None
 
 
 def test_list_recalls_filter_by_status(client):
@@ -312,6 +354,8 @@ def test_consumption_blocked_for_recalled_sample_itemwise(client):
     assert c["code"] == "sample_under_recall"
     assert c["sample_id"] == "S1"
     assert c["op_no"] == "CV-1"
+    # 核销号不是召回号:recall_no 字段不被误标,命中召回号在 recall_nos 中
+    assert c["recall_no"] is None
     assert c["recall_nos"] == ["RC-1"]
     assert "RC-1" in c["message"] and "污染" in c["message"]
 

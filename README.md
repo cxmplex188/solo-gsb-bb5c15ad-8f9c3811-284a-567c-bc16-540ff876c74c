@@ -155,7 +155,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 - **实时谱系追踪**:活跃召回的受影响范围**不持久化**,每次查询都按**当前** `lineage_edges` 实时重算——从源样品沿父→子方向 BFS,包含源样品自身(depth 0)与全部后代;**合并/合流(多条路径到达同一样品)对同一召回只计一次**,深度取最短跳数。因此召回开启后新做的分装/合并后代会被自动纳入;同一样品可经合流同时命中多个活跃召回。
 - **核销拦截**:核销领用(`POST /api/v1/consumptions`)在**原有单事务**内、原有校验(预留未释放、逐项未核销量、样品余量)之外逐项检查样品当前是否受活跃召回影响。任一样品命中即返回逐项冲突 `sample_under_recall`(冲突体 `recall_nos` 给出命中的**全部活跃召回号**,消息含各召回的源样品与原因),并与其他逐项冲突一并返回;**整单不扣量**——余量、版本、核销明细与锁定量一律不变,失败单不留核销记录。
 - **关闭即恢复**:`POST /api/v1/recalls/{recall_no}/close` 按召回号关闭(状态 active→closed,只允许一次;可带可选操作人/备注),关闭后追踪范围实时清空,核销领用恢复;**召回开启前已建立的预留同样适用**,无需重新预留。核销号已落库后即使再开召回,同号重放仍只回放首次结果、不重新校验召回也不二次扣量。
-- **幂等**:同一召回号 + 同一请求体重放返回首次结果(`replayed: true`),不重复开启;同号不同内容返回 `409 recall_no_conflict`;对已关闭召回号再次开启返回 `409 recall_closed`;重复关闭幂等返回首次关闭结果(首次关闭时间/操作人)。召回号不存在时查询/关闭返回 HTTP `404 recall_not_found`。新表随容器启动时的数据库初始化自动创建(旧版本数据库无需手工迁移)。
+- **幂等**:同一召回号 + 同一请求体重放返回首次结果(`replayed: true`),不重复开启;同号不同内容返回 `409 recall_no_conflict`;对已关闭召回号再次开启返回 `409 recall_closed`;重复关闭幂等返回首次关闭结果(首次关闭时间/操作人)。召回号不存在时查询/关闭返回 HTTP `404 recall_not_found`。召回相关冲突(开启/查询/关闭)的 `conflicts[]` 项均携带专用 `recall_no` 字段定位召回号(不占用通用 `op_no`,其他模块的操作号也不会误标为召回号)。新表随容器启动时的数据库初始化自动创建(旧版本数据库无需手工迁移)。
 - **查询**:`GET /api/v1/recalls/{recall_no}` 返回召回单与当前实时受影响样品(已关闭召回为空列表);`GET /api/v1/recalls` 列表可按 `status=active/closed` 过滤;`GET /api/v1/recalls/affected-samples` 返回当前全部受活跃召回影响的样品及对应召回号(可重复传 `sample_id` 过滤,不存在样品返回 `409`);`GET /api/v1/samples/{sample_id}/recalls` 返回单个样品命中的全部活跃召回。
 
 **对照样品独立来源筛选规则**
@@ -1055,9 +1055,9 @@ curl -X POST http://localhost:8000/api/v1/screenings/independent-sources \
 | `insufficient_unconsumed` | 核销量超过该预留明细的未核销量,附 `requested`(本次领用量)/`available`(剩余未核销量) |
 | `consumption_not_found` | 核销号不存在(查询时返回 HTTP 404) |
 | `sample_under_recall` | 核销样品受活跃召回影响(为召回源样品或其后代),附 `recall_nos` 命中召回号;整单不扣量 |
-| `recall_no_conflict` | 召回号已存在但请求内容不同(幂等键冲突) |
-| `recall_closed` | 召回号已关闭,不能再次开启 |
-| `recall_not_found` | 召回号不存在(查询/关闭时返回 HTTP 404) |
+| `recall_no_conflict` | 召回号已存在但请求内容不同(幂等键冲突),附 `recall_no` |
+| `recall_closed` | 召回号已关闭,不能再次开启,附 `recall_no` |
+| `recall_not_found` | 召回号不存在(查询/关闭时返回 HTTP 404),附 `recall_no` |
 | `stocktake_no_conflict` | 盘点批次号已存在但建批请求内容不同 |
 | `stocktake_result_conflict` | 批次已提交过不同的实盘结果(幂等键冲突) |
 | `stocktake_items_mismatch` | 实盘明细与批次快照不一致(缺少样品/出现批次外样品) |
